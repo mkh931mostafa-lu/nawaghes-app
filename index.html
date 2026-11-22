@@ -327,7 +327,7 @@ details.cat[open] summary .chev{transform:rotate(180deg)}
       <div class="report-tab" id="tabWeekly" onclick="setReportScope('weekly')">هفتگی</div>
       <div class="report-tab" id="tabMonthly" onclick="setReportScope('monthly')">ماهانه</div>
     </div>
-    <select class="report-select" id="reportMonthSelect" onchange="renderReport()" style="display:none;"></select>
+    <select class="report-select" id="reportMonthSelect" onchange="setReportMonth(this.value)" style="display:none;"></select>
     <div id="reportBody"></div>
   </div>
 </div>
@@ -829,6 +829,8 @@ function recordedDatesInRange(fromISO, toISOv){
     .sort();
 }
 
+let reportMonthKey = null;
+function setReportMonth(key){ reportMonthKey=key;renderReport(); }
 function populateMonthSelect(){
   const sel = document.getElementById('reportMonthSelect');
   const monthKeys = new Set();
@@ -839,7 +841,7 @@ function populateMonthSelect(){
   monthKeys.add(curKey);
   const sorted = [...monthKeys].sort().reverse();
   sel.innerHTML = sorted.map(k=>`<option value="${k}">${monthLabelFromKey(k)}</option>`).join('');
-  sel.value = curKey;
+  sel.value = reportMonthKey && monthKeys.has(reportMonthKey) ? reportMonthKey : curKey;
 }
 
 function categoryBreakdownHtml(dates, tab){
@@ -1061,6 +1063,7 @@ function toggleReport(){
   document.getElementById('reportPanel').classList.toggle('on');
   document.getElementById('reportBackdrop').classList.toggle('on');
   if(document.getElementById('reportPanel').classList.contains('on')){
+    reportMonthKey = monthKeyFromISO(selectedDate);
     reportScope = window.innerWidth <= 980 ? 'weekly' : 'monthly';
     renderReport();
   }
