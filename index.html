@@ -177,6 +177,17 @@ details.cat[open] summary .chev{transform:rotate(180deg)}
 .cat-chart-bar span{display:block;height:100%;border-radius:inherit}
 .cat-chart-value{font-size:10px;font-weight:700;text-align:left;color:var(--sub)}
 
+
+.report-help{font-size:10.5px;color:var(--sub);line-height:1.85;margin:5px 0 11px}
+.report-feature-note{font-size:10px;color:var(--sub-d);margin:-3px 0 9px;padding-right:3px}
+.report-compare-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 14px;align-items:center;padding:9px 0;border-bottom:1px solid var(--glass-b);font-size:11px;color:var(--sub)}
+.report-compare-row strong{color:var(--text);font-weight:600}
+.report-day-grid{display:flex;flex-wrap:wrap;gap:5px;margin:12px 0}
+.report-day-cell{display:inline-flex;align-items:center;justify-content:center;border-radius:6px;width:27px;height:28px;font-size:10px;font-weight:600}
+.report-day-cell.yes{background:rgba(111,196,102,.3);color:#b4f2af;border:1px solid rgba(111,196,102,.45)}
+.report-day-cell.no{background:rgba(224,113,79,.22);color:#f4b9a6;border:1px solid rgba(224,113,79,.36)}
+.report-day-cell.empty{background:rgba(255,255,255,.045);color:var(--sub-d);border:1px solid var(--glass-b)}
+
 .report-summary{font-size:12px;color:var(--sub);line-height:2;border-top:1px dashed var(--glass-b);padding-top:12px;margin-top:4px}
 .report-empty{font-size:12px;color:var(--sub-d);text-align:center;padding:20px 10px}
 
@@ -839,7 +850,7 @@ function categoryBreakdownHtml(dates, tab){
     dates.forEach(iso=>{
       const day = APP_DATA.days[iso];
       if(!day || !day.marks) return;
-      cat.items.forEach((it,ii)=>{ if(day.marks[tab+'-'+ci+'-'+ii]==='yes') count++; });
+      cat.items.forEach((it,ii)=>{ if(day.marks[it.id || (tab+'-'+ci+'-'+ii)]==='yes') count++; });
     });
     if(count>0) rows.push({name:cat.name, count});
   });
@@ -897,24 +908,122 @@ function summaryText(dates){
   return `${naghsLine} در همین بازه، مجموعاً ${toFa(totalKhob)} مورد ویژگی خوب و ${toFa(totalRel)} مورد اصل رابطه هم تیک خورده.`;
 }
 
+
+/* ---------- per-feature reports (read-only; historical mark IDs remain stable) ---------- */
+let reportFeatureId = '';
+function reportEscape(value){
+  return String(value).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function reportFeatureList(){
+  const result=[];
+  ['naghs','khob','rel'].forEach(tab=>{
+    DATA[tab].forEach((cat,ci)=>cat.items.forEach((item,ii)=>{
+      result.push({id:item.id || (tab+'-'+ci+'-'+ii), title:item.title, tab, category:cat.name});
+    }));
+  });
+  return result;
+}
+function reportFeatureStats(id, dates){
+  let yes=0,no=0;
+  dates.forEach(iso=>{
+    const day=APP_DATA.days[iso], mark=day && day.marks && day.marks[id];
+    if(mark==='yes') yes++;
+    else if(mark==='no') no++;
+  });
+  return {yes,no,answered:yes+no,rate:yes+no?yes/(yes+no):null};
+}
+function reportRangeDates(from,to){
+  const result=[];
+  for(let d=parseISO(from), end=parseISO(to);d<=end;d=addDays(d,1))
+    result.push(toISODate(d));
+  return result;
+}
+function reportPreviousRange(scope, currentDates, from, to){
+  if(scope==='weekly'){
+    const lastDay=addDays(parseISO(from),-1);
+    return reportRangeDates(toISODate(addDays(lastDay,-6)),toISODate(lastDay));
+  }
+  const priorDay=addDays(parseISO(from),-1);
+  const priorMonth=jalaliFromISO(toISODate(priorDay));
+  const prevStart=isoFromJalali(priorMonth.jy,priorMonth.jm,1);
+  const prevEnd=isoFromJalali(priorMonth.jy,priorMonth.jm,daysInJalaliMonth(priorMonth.jy,priorMonth.jm));
+  return reportRangeDates(prevStart,prevEnd);
+}
+function reportTopFeaturesHtml(current,previous,tab){
+  const features=reportFeatureList().filter(f=>f.tab===tab);
+  const stats=features.map(f=>({...f,now:reportFeatureStats(f.id,current),prev:reportFeatureStats(f.id,previous)}))
+    .filter(f=>f.now.yes>0).sort((a,b)=>b.now.yes-a.now.yes||a.title.localeCompare(b.title,'fa')).slice(0,8);
+  const heading=tab==='naghs'?'پرتکرارترین نواقص':tab==='khob'?'بیشترین ثبت ویژگی‌های خوب':'بیشترین ثبت اصول رابطه';
+  if(!stats.length)return '<div class="chart-card"><h3>'+heading+'</h3><div class="report-empty">در این بازه تیک «بله» برای این بخش ثبت نشده است.</div></div>';
+  const max=Math.max(...stats.map(x=>x.now.yes),1);
+  let html='<div class="chart-card"><h3>'+heading+'</h3><div class="report-help">تعداد «بله» از بین روزهای ثبت‌شده برای هر ویژگی؛ «نه» و ثبت‌نشده جدا هستند.</div>';
+  stats.forEach(x=>{
+    const pct=Math.round(x.now.yes/max*100);
+    const rate=x.now.rate===null?'':(' · '+toFa(Math.round(x.now.rate*100))+'٪ از پاسخ‌ها');
+    html+='<div class="cat-chart-row"><div class="cat-chart-name" title="'+reportEscape(x.category)+'">'+reportEscape(x.title)+'</div><div class="cat-chart-bar"><span style="width:'+pct+'%;background:var(--'+(tab==='naghs'?'coral':tab==='khob'?'violet':'teal')+')"></span></div><div class="cat-chart-value">'+toFa(x.now.yes)+'</div></div>';
+    html+='<div class="report-feature-note">'+reportEscape(x.category.replace(/^دسته:\s*/,''))+rate+'</div>';
+  });
+  return html+'</div>';
+}
+function reportPeriodComparisonHtml(current,previous){
+  const features=reportFeatureList();
+  const count=(dates,tab)=>{
+    let yes=0,no=0;
+    for(const f of features.filter(x=>x.tab===tab)){
+      const r=reportFeatureStats(f.id,dates);yes+=r.yes;no+=r.no;
+    }
+    return {yes,no,total:yes+no,rate:yes+no?Math.round(100*yes/(yes+no)):null};
+  };
+  let html='<div class="chart-card"><h3>مقایسه با دوره قبل</h3><div class="report-help">مقایسه درصد «بله» از پاسخ‌های واقعی، نه از روزهای خالی. تعداد روزهای دارای ثبت: '+toFa(current.filter(d=>dayCounts(d)).length)+' در این دوره و '+toFa(previous.filter(d=>dayCounts(d)).length)+' در دوره قبل.</div>';
+  for(const [tab,label] of [['naghs','نواقص'],['khob','ویژگی‌های خوب'],['rel','اصول رابطه']]){
+    const a=count(current,tab),b=count(previous,tab);
+    const rate=r=>r.rate===null?'بدون پاسخ':toFa(r.rate)+'٪';
+    const diff=a.rate!==null&&b.rate!==null?(' ('+toFa(Math.abs(a.rate-b.rate))+' واحد درصد '+(a.rate>b.rate?'بیشتر':'کمتر یا برابر')+')'):'';
+    html+='<div class="report-compare-row"><strong>'+label+'</strong><span>این دوره: '+rate(a)+' ('+toFa(a.yes)+' بله، '+toFa(a.no)+' نه)</span><span>دوره قبل: '+rate(b)+diff+'</span></div>';
+  }
+  return html+'</div>';
+}
+function reportFeatureDetailHtml(current,previous){
+  const features=reportFeatureList();
+  if(!features.length)return '';
+  if(!features.some(x=>x.id===reportFeatureId))reportFeatureId=features[0].id;
+  const feature=features.find(x=>x.id===reportFeatureId);
+  const a=reportFeatureStats(feature.id,current),b=reportFeatureStats(feature.id,previous);
+  const rate=r=>r.rate===null?'بدون پاسخ':toFa(Math.round(r.rate*100))+'٪';
+  const options=features.map(x=>'<option value="'+reportEscape(x.id)+'"'+(x.id===reportFeatureId?' selected':'')+'>'+reportEscape(x.title+' · '+x.category.replace(/^دسته:\s*/,''))+'</option>').join('');
+  let html='<div class="chart-card"><h3>روند هر ویژگی</h3><label class="report-help" for="reportFeatureSelect">یک ویژگی را انتخاب کن:</label><select id="reportFeatureSelect" class="report-select" onchange="setReportFeature(this.value)">'+options+'</select>';
+  html+='<div class="report-compare-row"><strong>'+reportEscape(feature.title)+'</strong><span>این دوره: '+toFa(a.yes)+' بله، '+toFa(a.no)+' نه · '+rate(a)+'</span><span>دوره قبل: '+toFa(b.yes)+' بله، '+toFa(b.no)+' نه · '+rate(b)+'</span></div>';
+  html+='<div class="report-day-grid">';
+  current.forEach(iso=>{
+    const record=APP_DATA.days[iso],state=record&&record.marks&&record.marks[feature.id];
+    const cls=state==='yes'?'yes':state==='no'?'no':'empty';
+    const day=jalaliParts(parseISO(iso));
+    html+='<span class="report-day-cell '+cls+'" title="'+reportEscape(iso)+' · '+(cls==='yes'?'بله':cls==='no'?'نه':'ثبت‌نشده')+'">'+toFa(day.day)+'</span>';
+  });
+  html+='</div><div class="report-help">پررنگ: بله · قرمز: نه · کمرنگ: ثبت‌نشده. روز بدون پاسخ، «نه» محسوب نمی‌شود.</div></div>';
+  return html;
+}
+function setReportFeature(value){ reportFeatureId=value;renderReport(); }
+
 function renderReport(){
   populateMonthSelect();
   document.getElementById('tabWeekly').classList.toggle('on', reportScope==='weekly');
   document.getElementById('tabMonthly').classList.toggle('on', reportScope==='monthly');
   document.getElementById('reportMonthSelect').style.display = reportScope==='monthly' ? 'block' : 'none';
 
-  let dates, rangeLabel;
+  let dates, rangeLabel, fromISO, toISOv;
   if(reportScope==='weekly'){
     const start = startOfWeekSaturday(parseISO(selectedDate));
     const all = Array.from({length:7},(_,i)=>toISODate(addDays(start,i)));
     dates = all.filter(iso=>dayCounts(iso));
+    fromISO = all[0]; toISOv=all[all.length-1];
     rangeLabel = 'هفته‌ی جاری';
   } else {
     const key = document.getElementById('reportMonthSelect').value || monthKeyFromISO(selectedDate);
     const [jy,jm] = key.split('-').map(Number);
     const maxDays = daysInJalaliMonth(jy,jm);
-    const fromISO = isoFromJalali(jy,jm,1);
-    const toISOv = isoFromJalali(jy,jm,maxDays);
+    fromISO = isoFromJalali(jy,jm,1);
+    toISOv = isoFromJalali(jy,jm,maxDays);
     dates = recordedDatesInRange(fromISO, toISOv);
     rangeLabel = monthLabelFromKey(key);
   }
@@ -925,7 +1034,14 @@ function renderReport(){
     return;
   }
 
+  const fullRange=reportRangeDates(fromISO,toISOv);
+  const prevRange=reportPreviousRange(reportScope,fullRange,fromISO,toISOv);
   let html = '';
+  html += reportPeriodComparisonHtml(fullRange,prevRange);
+  html += reportTopFeaturesHtml(fullRange,prevRange,'naghs');
+  html += reportTopFeaturesHtml(fullRange,prevRange,'khob');
+  html += reportTopFeaturesHtml(fullRange,prevRange,'rel');
+  html += reportFeatureDetailHtml(fullRange,prevRange);
   html += trendBarsHtml(dates, `روند نواقص — ${rangeLabel}`, 'naghs', 'bar-naghs', 'var(--coral)');
   html += trendBarsHtml(dates, `روند ویژگی‌های خوب — ${rangeLabel}`, 'khob', 'bar-khob', 'var(--violet)');
   html += trendBarsHtml(dates, `روند اصول رابطه — ${rangeLabel}`, 'rel', 'bar-rel', 'var(--teal)');
