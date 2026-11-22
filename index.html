@@ -324,10 +324,10 @@ details.cat[open] summary .chev{transform:rotate(180deg)}
     <button type="button" class="report-close" onclick="toggleReport()">✕</button>
     <div class="report-title">گزارش روند نواقص</div>
     <div class="report-tabs">
-      <div class="report-tab" id="tabWeekly" onclick="setReportScope('weekly')">هفتگی</div>
-      <div class="report-tab" id="tabMonthly" onclick="setReportScope('monthly')">ماهانه</div>
+      <div class="report-tab" id="tab7" onclick="setReportScope(7)">۷ نوبت</div>
+      <div class="report-tab" id="tab30" onclick="setReportScope(30)">۳۰ نوبت</div>
+      <div class="report-tab" id="tab90" onclick="setReportScope(90)">۹۰ نوبت</div>
     </div>
-    <select class="report-select" id="reportMonthSelect" onchange="setReportMonth(this.value)" style="display:none;"></select>
     <div id="reportBody"></div>
   </div>
 </div>
@@ -596,7 +596,7 @@ function monthLabelFromKey(key){ const [y,m]=key.split('-').map(Number); return 
 let APP_DATA = null;
 const TODAY_ISO = toISODate(new Date());
 let selectedDate = TODAY_ISO;
-let reportScope = 'monthly';
+let reportScope = 30;
 
 function migrateOrInit(){
   const fresh = { version:2, updatedAt:new Date().toISOString(), days:{} };
@@ -829,21 +829,12 @@ function recordedDatesInRange(fromISO, toISOv){
     .sort();
 }
 
-let reportMonthKey = null;
-function setReportMonth(key){ reportMonthKey=key;renderReport(); }
-function populateMonthSelect(){
-  const sel = document.getElementById('reportMonthSelect');
-  const monthKeys = new Set();
-  Object.keys(APP_DATA.days).forEach(iso=>{
-    if(dayCounts(iso)) monthKeys.add(monthKeyFromISO(iso));
-  });
-  const curKey = monthKeyFromISO(selectedDate);
-  monthKeys.add(curKey);
-  const sorted = [...monthKeys].sort().reverse();
-  sel.innerHTML = sorted.map(k=>`<option value="${k}">${monthLabelFromKey(k)}</option>`).join('');
-  sel.value = reportMonthKey && monthKeys.has(reportMonthKey) ? reportMonthKey : curKey;
+// Recorded sessions are dates with saved answers, independent of Jalali month.
+function reportRecordedDates(){
+  return Object.keys(APP_DATA.days)
+    .filter(iso => dayCounts(iso) !== null)
+    .sort();
 }
-
 function categoryBreakdownHtml(dates, tab){
   const dotColor = tab==='naghs' ? 'var(--coral)' : (tab==='khob' ? 'var(--violet)' : 'var(--teal)');
   const rows = [];
@@ -934,23 +925,6 @@ function reportFeatureStats(id, dates){
   });
   return {yes,no,answered:yes+no,rate:yes+no?yes/(yes+no):null};
 }
-function reportRangeDates(from,to){
-  const result=[];
-  for(let d=parseISO(from), end=parseISO(to);d<=end;d=addDays(d,1))
-    result.push(toISODate(d));
-  return result;
-}
-function reportPreviousRange(scope, currentDates, from, to){
-  if(scope==='weekly'){
-    const lastDay=addDays(parseISO(from),-1);
-    return reportRangeDates(toISODate(addDays(lastDay,-6)),toISODate(lastDay));
-  }
-  const priorDay=addDays(parseISO(from),-1);
-  const priorMonth=jalaliFromISO(toISODate(priorDay));
-  const prevStart=isoFromJalali(priorMonth.jy,priorMonth.jm,1);
-  const prevEnd=isoFromJalali(priorMonth.jy,priorMonth.jm,daysInJalaliMonth(priorMonth.jy,priorMonth.jm));
-  return reportRangeDates(prevStart,prevEnd);
-}
 function reportTopFeaturesHtml(current,previous,tab){
   const features=reportFeatureList().filter(f=>f.tab===tab);
   const stats=features.map(f=>({...f,now:reportFeatureStats(f.id,current),prev:reportFeatureStats(f.id,previous)}))
@@ -1008,27 +982,13 @@ function reportFeatureDetailHtml(current,previous){
 function setReportFeature(value){ reportFeatureId=value;renderReport(); }
 
 function renderReport(){
-  populateMonthSelect();
-  document.getElementById('tabWeekly').classList.toggle('on', reportScope==='weekly');
-  document.getElementById('tabMonthly').classList.toggle('on', reportScope==='monthly');
-  document.getElementById('reportMonthSelect').style.display = reportScope==='monthly' ? 'block' : 'none';
-
-  let dates, rangeLabel, fromISO, toISOv;
-  if(reportScope==='weekly'){
-    const start = startOfWeekSaturday(parseISO(selectedDate));
-    const all = Array.from({length:7},(_,i)=>toISODate(addDays(start,i)));
-    dates = all.filter(iso=>dayCounts(iso));
-    fromISO = all[0]; toISOv=all[all.length-1];
-    rangeLabel = 'هفته‌ی جاری';
-  } else {
-    const key = document.getElementById('reportMonthSelect').value || monthKeyFromISO(selectedDate);
-    const [jy,jm] = key.split('-').map(Number);
-    const maxDays = daysInJalaliMonth(jy,jm);
-    fromISO = isoFromJalali(jy,jm,1);
-    toISOv = isoFromJalali(jy,jm,maxDays);
-    dates = recordedDatesInRange(fromISO, toISOv);
-    rangeLabel = monthLabelFromKey(key);
-  }
+  [7,30,90].forEach(n=>{
+    document.getElementById('tab'+n).classList.toggle('on', reportScope===n);
+  });
+  const allDates = reportRecordedDates();
+  const dates = allDates.slice(-reportScope);
+  const prevRange = allDates.slice(-reportScope-dates.length,-dates.length || undefined);
+  const rangeLabel = toFa(reportScope)+' نوبت اخیر';
 
   const body = document.getElementById('reportBody');
   if(dates.length===0){
@@ -1036,14 +996,12 @@ function renderReport(){
     return;
   }
 
-  const fullRange=reportRangeDates(fromISO,toISOv);
-  const prevRange=reportPreviousRange(reportScope,fullRange,fromISO,toISOv);
   let html = '';
-  html += reportPeriodComparisonHtml(fullRange,prevRange);
-  html += reportTopFeaturesHtml(fullRange,prevRange,'naghs');
-  html += reportTopFeaturesHtml(fullRange,prevRange,'khob');
-  html += reportTopFeaturesHtml(fullRange,prevRange,'rel');
-  html += reportFeatureDetailHtml(fullRange,prevRange);
+  html += reportPeriodComparisonHtml(dates,prevRange);
+  html += reportTopFeaturesHtml(dates,prevRange,'naghs');
+  html += reportTopFeaturesHtml(dates,prevRange,'khob');
+  html += reportTopFeaturesHtml(dates,prevRange,'rel');
+  html += reportFeatureDetailHtml(dates,prevRange);
   html += trendBarsHtml(dates, `روند نواقص — ${rangeLabel}`, 'naghs', 'bar-naghs', 'var(--coral)');
   html += trendBarsHtml(dates, `روند ویژگی‌های خوب — ${rangeLabel}`, 'khob', 'bar-khob', 'var(--violet)');
   html += trendBarsHtml(dates, `روند اصول رابطه — ${rangeLabel}`, 'rel', 'bar-rel', 'var(--teal)');
@@ -1055,7 +1013,8 @@ function renderReport(){
 }
 
 function setReportScope(scope){
-  reportScope = scope;
+  if(![7,30,90].includes(Number(scope))) return;
+  reportScope = Number(scope);
   renderReport();
 }
 
@@ -1063,8 +1022,6 @@ function toggleReport(){
   document.getElementById('reportPanel').classList.toggle('on');
   document.getElementById('reportBackdrop').classList.toggle('on');
   if(document.getElementById('reportPanel').classList.contains('on')){
-    reportMonthKey = monthKeyFromISO(selectedDate);
-    reportScope = window.innerWidth <= 980 ? 'weekly' : 'monthly';
     renderReport();
   }
 }
